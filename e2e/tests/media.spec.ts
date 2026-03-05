@@ -1,12 +1,19 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("Media Library", () => {
-  test.beforeEach(async ({ page }) => {
-    // Set a mock session token for testing
-    await page.goto("/login");
-    await page.evaluate(() => {
-      localStorage.setItem("session_token", "test-token");
-    });
+  test.beforeEach(async ({ page, context }) => {
+    // Set a mock session cookie for testing (httpOnly cookie-based auth)
+    await context.addCookies([
+      {
+        name: "session_token",
+        value: "test-token",
+        domain: "localhost",
+        path: "/",
+        httpOnly: true,
+        secure: false,
+        sameSite: "Lax",
+      },
+    ]);
   });
 
   test("should show media library page structure", async ({ page }) => {

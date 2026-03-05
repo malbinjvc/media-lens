@@ -6,13 +6,20 @@ import { db } from "../db/index.js";
 import { projects, media } from "../db/schema.js";
 
 export const projectsRouter = router({
-  list: protectedProcedure.query(async ({ ctx }) => {
-    return db
-      .select()
-      .from(projects)
-      .where(eq(projects.userId, ctx.user.id))
-      .orderBy(desc(projects.updatedAt));
-  }),
+  list: protectedProcedure
+    .input(
+      z.object({
+        limit: z.number().min(1).max(50).default(50),
+      }).optional()
+    )
+    .query(async ({ ctx, input }) => {
+      return db
+        .select()
+        .from(projects)
+        .where(eq(projects.userId, ctx.user.id))
+        .orderBy(desc(projects.updatedAt))
+        .limit(input?.limit ?? 50);
+    }),
 
   get: protectedProcedure
     .input(z.object({ id: z.string().uuid() }))
@@ -38,7 +45,8 @@ export const projectsRouter = router({
         .where(
           and(eq(media.projectId, input.id), eq(media.userId, ctx.user.id))
         )
-        .orderBy(desc(media.createdAt));
+        .orderBy(desc(media.createdAt))
+        .limit(100);
 
       return { ...project, media: projectMedia };
     }),

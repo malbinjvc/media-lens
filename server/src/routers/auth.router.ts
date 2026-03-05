@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { eq, and, lt } from "drizzle-orm";
 import { router, publicProcedure, protectedProcedure } from "../trpc.js";
 import { db } from "../db/index.js";
-import { users, sessions } from "../db/schema.js";
+import { users, sessions, oauthStates } from "../db/schema.js";
 import { googleOAuth, githubOAuth } from "../lib/oauth.js";
 import { generateCodeVerifier, generateState } from "arctic";
 import { env } from "../lib/env.js";
@@ -11,27 +11,13 @@ import crypto from "crypto";
 
 const providerSchema = z.enum(["google", "github"]);
 
-// In-memory store for OAuth state validation (CSRF protection)
-// In production, use Redis or database
-const pendingOAuthStates = new Map<
-  string,
-  { provider: string; codeVerifier?: string; expiresAt: number }
->();
-
-// Cleanup expired states every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, val] of pendingOAuthStates) {
-    if (val.expiresAt < now) pendingOAuthStates.delete(key);
-  }
-}, 5 * 60 * 1000);
-
 function generateSessionToken(): string {
   return crypto.randomBytes(32).toString("hex");
 }
 
 const MAX_SESSIONS_PER_USER = 10;
 const SESSION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const OAUTH_STATE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
 
 function setSessionCookie(
   res: import("express").Response,
@@ -52,6 +38,12 @@ export const authRouter = router({
     .input(z.object({ provider: providerSchema }))
     .mutation(async ({ input }) => {
       const state = generateState();
+      const expiresAt = new Date(Date.now() + OAUTH_STATE_EXPIRY_MS);
+
+      // Cleanup expired OAuth states
+      await db
+        .delete(oauthStates)
+        .where(lt(oauthStates.expiresAt, new Date()));
 
       if (input.provider === "google") {
         const codeVerifier = generateCodeVerifier();
@@ -60,20 +52,25 @@ export const authRouter = router({
           "email",
           "profile",
         ]);
-        // Store state + codeVerifier server-side (10 min expiry)
-        pendingOAuthStates.set(state, {
+
+        await db.insert(oauthStates).values({
+          state,
           provider: "google",
           codeVerifier,
-          expiresAt: Date.now() + 10 * 60 * 1000,
+          expiresAt,
         });
+
         return { url: url.toString(), state };
       }
 
       const url = githubOAuth.createAuthorizationURL(state, ["user:email"]);
-      pendingOAuthStates.set(state, {
+
+      await db.insert(oauthStates).values({
+        state,
         provider: "github",
-        expiresAt: Date.now() + 10 * 60 * 1000,
+        expiresAt,
       });
+
       return { url: url.toString(), state };
     }),
 
@@ -86,17 +83,20 @@ export const authRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Validate OAuth state (CSRF protection)
-      const pending = pendingOAuthStates.get(input.state);
+      // Retrieve and delete OAuth state from database (one-time use)
+      const [pending] = await db
+        .delete(oauthStates)
+        .where(eq(oauthStates.state, input.state))
+        .returning();
+
       if (!pending || pending.provider !== input.provider) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Invalid or expired OAuth state",
         });
       }
-      pendingOAuthStates.delete(input.state);
 
-      if (pending.expiresAt < Date.now()) {
+      if (pending.expiresAt < new Date()) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "OAuth state expired",
@@ -207,11 +207,10 @@ export const authRouter = router({
         expiresAt,
       });
 
-      // Set httpOnly cookie (primary auth method)
+      // Set httpOnly cookie (sole auth delivery method)
       setSessionCookie(ctx.res, token, expiresAt);
 
-      // Also return token for clients that can't use cookies (e.g. mobile)
-      return { token, user: { id: user.id, email: user.email, name: user.name } };
+      return { user: { id: user.id, email: user.email, name: user.name } };
     }),
 
   me: protectedProcedure.query(async ({ ctx }) => {
@@ -219,15 +218,12 @@ export const authRouter = router({
   }),
 
   logout: protectedProcedure.mutation(async ({ ctx }) => {
-    const token =
-      ctx.req.headers.authorization?.replace("Bearer ", "") ||
-      ctx.req.cookies?.session_token;
+    const token = ctx.req.cookies?.session_token;
 
     if (token) {
       await db.delete(sessions).where(eq(sessions.token, token));
     }
 
-    // Clear the session cookie
     ctx.res.clearCookie("session_token", {
       httpOnly: true,
       secure: env.NODE_ENV === "production",

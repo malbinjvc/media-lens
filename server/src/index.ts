@@ -29,6 +29,15 @@ app.use(
     },
   })
 );
+
+// Permissions-Policy header (not built into helmet)
+app.use((_req, res, next) => {
+  res.setHeader(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=(), payment=()"
+  );
+  next();
+});
 app.use(
   cors({
     origin: env.CORS_ORIGIN,

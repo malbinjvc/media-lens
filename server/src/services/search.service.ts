@@ -95,6 +95,8 @@ export const searchService = {
       filter: filterParts.join(" AND "),
       limit,
       attributesToHighlight: ["title", "description", "aiAnalysis"],
+      highlightPreTag: "[[",
+      highlightPostTag: "]]",
     });
   },
 };

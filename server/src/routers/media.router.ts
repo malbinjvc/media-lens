@@ -61,8 +61,8 @@ export const mediaRouter = router({
     .input(
       z.object({
         filename: z.string().min(1).max(255),
-        mimeType: z.string().min(1),
-        size: z.number().positive(),
+        mimeType: z.string().regex(/^(image\/(jpeg|png|gif|webp)|application\/pdf|text\/(plain|markdown|csv))$/),
+        size: z.number().positive().max(50 * 1024 * 1024),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -84,9 +84,9 @@ export const mediaRouter = router({
     .input(
       z.object({
         filename: z.string().min(1).max(255),
-        mimeType: z.string().min(1),
+        mimeType: z.string().regex(/^(image\/(jpeg|png|gif|webp)|application\/pdf|text\/(plain|markdown|csv))$/),
         size: z.number().positive().max(50 * 1024 * 1024),
-        storageKey: z.string().min(1),
+        storageKey: z.string().min(1).max(500).regex(/^[a-f0-9-]+\/\d+-[a-zA-Z0-9._-]+$/, "Invalid storage key format"),
         title: z.string().min(1).max(255),
         projectId: z.string().uuid().optional(),
       })
@@ -109,6 +109,18 @@ export const mediaRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "File not found in storage. Upload the file first.",
+        });
+      }
+
+      // SECURITY: Verify uploaded file content type matches declared mimeType
+      const contentTypeValid = await storageService.verifyObjectContentType(
+        input.storageKey,
+        input.mimeType
+      );
+      if (!contentTypeValid) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Uploaded file content type does not match declared type",
         });
       }
 

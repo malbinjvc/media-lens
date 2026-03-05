@@ -79,7 +79,18 @@ export const media = pgTable("media", {
     .notNull(),
 });
 
+export const oauthStates = pgTable("oauth_states", {
+  state: text("state").primaryKey(),
+  provider: providerEnum("provider").notNull(),
+  codeVerifier: text("code_verifier"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type Project = typeof projects.$inferSelect;
 export type Media = typeof media.$inferSelect;
+export type OAuthState = typeof oauthStates.$inferSelect;
