@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { trpc } from "$lib/trpc.js";
+  import { toast } from "$lib/stores/toast.js";
   import Header from "../../components/Header.svelte";
   import MediaUploader from "../../components/MediaUploader.svelte";
   import MediaGrid from "../../components/MediaGrid.svelte";
@@ -14,7 +15,7 @@
       const result = await trpc.media.list.query({ limit: 50 });
       items = result.items;
     } catch {
-      // ignore
+      toast.error("Failed to load media");
     } finally {
       loading = false;
     }

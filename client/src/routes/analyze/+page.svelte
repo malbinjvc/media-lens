@@ -8,6 +8,7 @@
   let items = $state<any[]>([]);
   let loading = $state(true);
   let processing = $state<Set<string>>(new Set());
+  let bulkRunning = $state(false);
 
   async function loadMedia() {
     loading = true;
@@ -15,13 +16,14 @@
       const result = await trpc.media.list.query({ limit: 50 });
       items = result.items;
     } catch {
-      // ignore
+      toast.error("Failed to load media");
     } finally {
       loading = false;
     }
   }
 
   async function analyzeItem(id: string) {
+    if (processing.has(id)) return;
     processing = new Set([...processing, id]);
     try {
       await trpc.ai.analyze.mutate({ mediaId: id });
@@ -35,9 +37,15 @@
   }
 
   async function analyzeAll() {
-    const pending = items.filter((i) => i.status === "pending");
-    for (const item of pending) {
-      await analyzeItem(item.id);
+    if (bulkRunning) return;
+    bulkRunning = true;
+    try {
+      const pending = items.filter((i) => i.status === "pending");
+      for (const item of pending) {
+        await analyzeItem(item.id);
+      }
+    } finally {
+      bulkRunning = false;
     }
   }
 
@@ -70,7 +78,8 @@
     {#if items.some((i) => i.status === "pending")}
       <button
         onclick={analyzeAll}
-        class="flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700"
+        disabled={bulkRunning}
+        class="flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50"
       >
         <Sparkles class="h-4 w-4" />
         Analyze All Pending

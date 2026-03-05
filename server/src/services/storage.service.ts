@@ -60,10 +60,42 @@ export const storageService = {
     await minioClient.removeObject(BUCKET, storageKey);
   },
 
+  async objectExists(storageKey: string): Promise<boolean> {
+    try {
+      await minioClient.statObject(BUCKET, storageKey);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  async verifyObjectContentType(
+    storageKey: string,
+    expectedMimeType: string
+  ): Promise<boolean> {
+    try {
+      const stat = await minioClient.statObject(BUCKET, storageKey);
+      // If content-type was set during upload, verify it matches
+      if (stat.metaData?.["content-type"]) {
+        return stat.metaData["content-type"] === expectedMimeType;
+      }
+      return true; // No content-type metadata to verify against
+    } catch {
+      return false;
+    }
+  },
+
   async getObjectBuffer(storageKey: string): Promise<Buffer> {
+    const MAX_BUFFER_SIZE = 20 * 1024 * 1024; // 20 MB limit for AI processing
     const stream = await minioClient.getObject(BUCKET, storageKey);
     const chunks: Buffer[] = [];
+    let totalSize = 0;
     for await (const chunk of stream) {
+      totalSize += chunk.length;
+      if (totalSize > MAX_BUFFER_SIZE) {
+        stream.destroy();
+        throw new Error("File too large for processing (max 20 MB)");
+      }
       chunks.push(Buffer.from(chunk));
     }
     return Buffer.concat(chunks);

@@ -72,19 +72,21 @@ export const searchService = {
     await this.ensureIndex();
     const index = client.index(INDEX_NAME);
 
-    const filterParts: string[] = [`userId = "${userId}"`];
+    const escapeFilter = (val: string) => val.replace(/["\\]/g, "\\$&");
+
+    const filterParts: string[] = [`userId = "${escapeFilter(userId)}"`];
     if (filters?.projectId) {
-      filterParts.push(`projectId = "${filters.projectId}"`);
+      filterParts.push(`projectId = "${escapeFilter(filters.projectId)}"`);
     }
     if (filters?.mimeType) {
-      filterParts.push(`mimeType = "${filters.mimeType}"`);
+      filterParts.push(`mimeType = "${escapeFilter(filters.mimeType)}"`);
     }
     if (filters?.status) {
-      filterParts.push(`status = "${filters.status}"`);
+      filterParts.push(`status = "${escapeFilter(filters.status)}"`);
     }
     if (filters?.tags?.length) {
       const tagFilters = filters.tags
-        .map((t) => `tags = "${t}"`)
+        .map((t) => `tags = "${escapeFilter(t)}"`)
         .join(" AND ");
       filterParts.push(`(${tagFilters})`);
     }

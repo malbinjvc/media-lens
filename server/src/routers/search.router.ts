@@ -10,9 +10,9 @@ export const searchRouter = router({
         filters: z
           .object({
             projectId: z.string().uuid().optional(),
-            mimeType: z.string().optional(),
+            mimeType: z.string().regex(/^[a-z]+\/[a-z0-9.+-]+$/).optional(),
             status: z.enum(["pending", "analyzed", "failed"]).optional(),
-            tags: z.array(z.string()).optional(),
+            tags: z.array(z.string().max(50).regex(/^[a-zA-Z0-9\s_-]+$/)).max(20).optional(),
           })
           .optional(),
         limit: z.number().min(1).max(100).default(20),

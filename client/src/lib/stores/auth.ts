@@ -13,18 +13,17 @@ function createAuthStore() {
   return {
     subscribe,
     async init() {
-      const token = localStorage.getItem("session_token");
-      if (!token) return;
+      // Session is managed via httpOnly cookie (set by server).
+      // Try to fetch user - cookie is sent automatically via credentials: "include".
       try {
         const user = await trpc.auth.me.query();
         set(user);
       } catch {
-        localStorage.removeItem("session_token");
         set(null);
       }
     },
-    setUser(user: User, token: string) {
-      localStorage.setItem("session_token", token);
+    setUser(user: User) {
+      // Cookie is already set by server via Set-Cookie header.
       set(user);
     },
     async logout() {
@@ -33,7 +32,6 @@ function createAuthStore() {
       } catch {
         // ignore
       }
-      localStorage.removeItem("session_token");
       set(null);
     },
   };

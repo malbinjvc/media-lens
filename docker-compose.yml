@@ -6,13 +6,13 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: medialens
-      POSTGRES_PASSWORD: medialens
-      POSTGRES_DB: medialens
+      POSTGRES_USER: ${POSTGRES_USER:-medialens}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-medialens}
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U medialens"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-medialens}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -22,8 +22,8 @@ services:
     ports:
       - "7700:7700"
     environment:
-      MEILI_MASTER_KEY: your_meilisearch_master_key
-      MEILI_ENV: development
+      MEILI_MASTER_KEY: ${MEILISEARCH_API_KEY:?Set MEILISEARCH_API_KEY in .env}
+      MEILI_ENV: ${MEILI_ENV:-development}
     volumes:
       - ms_data:/meili_data
     healthcheck:
@@ -38,8 +38,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in .env}
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"

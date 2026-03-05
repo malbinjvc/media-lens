@@ -18,7 +18,7 @@
     try {
       projects = await trpc.projects.list.query();
     } catch {
-      // ignore
+      toast.error("Failed to load projects");
     } finally {
       loading = false;
     }

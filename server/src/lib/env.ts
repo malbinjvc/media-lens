@@ -34,14 +34,37 @@ const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
+const WEAK_DEFAULTS = ["minioadmin", "medialens", "your_meilisearch_master_key"];
+
 function validateEnv(): Env {
   const result = envSchema.safeParse(process.env);
   if (!result.success) {
-    console.error("Invalid environment variables:");
-    console.error(result.error.flatten().fieldErrors);
+    const fields = Object.keys(result.error.flatten().fieldErrors);
+    console.error(`Invalid environment variables: ${fields.join(", ")}`);
     process.exit(1);
   }
-  return result.data;
+
+  const env = result.data;
+
+  // Reject weak defaults and unsafe config in production
+  if (env.NODE_ENV === "production") {
+    const weakFields: string[] = [];
+    if (WEAK_DEFAULTS.includes(env.MINIO_ACCESS_KEY)) weakFields.push("MINIO_ACCESS_KEY");
+    if (WEAK_DEFAULTS.includes(env.MINIO_SECRET_KEY)) weakFields.push("MINIO_SECRET_KEY");
+    if (WEAK_DEFAULTS.includes(env.MEILISEARCH_API_KEY)) weakFields.push("MEILISEARCH_API_KEY");
+    if (env.CORS_ORIGIN === "*") weakFields.push("CORS_ORIGIN (must not be *)");
+    if (!env.MINIO_USE_SSL) weakFields.push("MINIO_USE_SSL (should be true)");
+
+    if (weakFields.length > 0) {
+      console.error(
+        `SECURITY: Weak/unsafe configuration in production: ${weakFields.join(", ")}. ` +
+          "Change these values before deploying."
+      );
+      process.exit(1);
+    }
+  }
+
+  return env;
 }
 
 export const env = validateEnv();

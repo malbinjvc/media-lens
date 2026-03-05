@@ -1,17 +1,50 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { eq } from "drizzle-orm";
+import { eq, and, lt } from "drizzle-orm";
 import { router, publicProcedure, protectedProcedure } from "../trpc.js";
 import { db } from "../db/index.js";
 import { users, sessions } from "../db/schema.js";
 import { googleOAuth, githubOAuth } from "../lib/oauth.js";
 import { generateCodeVerifier, generateState } from "arctic";
+import { env } from "../lib/env.js";
 import crypto from "crypto";
 
 const providerSchema = z.enum(["google", "github"]);
 
+// In-memory store for OAuth state validation (CSRF protection)
+// In production, use Redis or database
+const pendingOAuthStates = new Map<
+  string,
+  { provider: string; codeVerifier?: string; expiresAt: number }
+>();
+
+// Cleanup expired states every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of pendingOAuthStates) {
+    if (val.expiresAt < now) pendingOAuthStates.delete(key);
+  }
+}, 5 * 60 * 1000);
+
 function generateSessionToken(): string {
   return crypto.randomBytes(32).toString("hex");
+}
+
+const MAX_SESSIONS_PER_USER = 10;
+const SESSION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function setSessionCookie(
+  res: import("express").Response,
+  token: string,
+  expiresAt: Date
+) {
+  res.cookie("session_token", token, {
+    httpOnly: true,
+    secure: env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    expires: expiresAt,
+  });
 }
 
 export const authRouter = router({
@@ -27,10 +60,20 @@ export const authRouter = router({
           "email",
           "profile",
         ]);
-        return { url: url.toString(), state, codeVerifier };
+        // Store state + codeVerifier server-side (10 min expiry)
+        pendingOAuthStates.set(state, {
+          provider: "google",
+          codeVerifier,
+          expiresAt: Date.now() + 10 * 60 * 1000,
+        });
+        return { url: url.toString(), state };
       }
 
       const url = githubOAuth.createAuthorizationURL(state, ["user:email"]);
+      pendingOAuthStates.set(state, {
+        provider: "github",
+        expiresAt: Date.now() + 10 * 60 * 1000,
+      });
       return { url: url.toString(), state };
     }),
 
@@ -38,26 +81,43 @@ export const authRouter = router({
     .input(
       z.object({
         provider: providerSchema,
-        code: z.string(),
-        codeVerifier: z.string().optional(),
+        code: z.string().min(1).max(2000),
+        state: z.string().min(1).max(200),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      // Validate OAuth state (CSRF protection)
+      const pending = pendingOAuthStates.get(input.state);
+      if (!pending || pending.provider !== input.provider) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Invalid or expired OAuth state",
+        });
+      }
+      pendingOAuthStates.delete(input.state);
+
+      if (pending.expiresAt < Date.now()) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "OAuth state expired",
+        });
+      }
+
       let email: string;
       let name: string;
       let avatarUrl: string | null = null;
       let providerId: string;
 
       if (input.provider === "google") {
-        if (!input.codeVerifier) {
+        if (!pending.codeVerifier) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: "Code verifier required for Google OAuth",
+            message: "Code verifier not found for Google OAuth",
           });
         }
         const tokens = await googleOAuth.validateAuthorizationCode(
           input.code,
-          input.codeVerifier
+          pending.codeVerifier
         );
         const response = await fetch(
           "https://openidconnect.googleapis.com/v1/userinfo",
@@ -119,8 +179,27 @@ export const authRouter = router({
           .returning();
       }
 
+      // Enforce max sessions per user
+      const userSessions = await db
+        .select()
+        .from(sessions)
+        .where(eq(sessions.userId, user.id))
+        .orderBy(sessions.createdAt);
+
+      if (userSessions.length >= MAX_SESSIONS_PER_USER) {
+        const oldest = userSessions[0];
+        await db.delete(sessions).where(eq(sessions.id, oldest.id));
+      }
+
+      // Cleanup expired sessions for this user
+      await db
+        .delete(sessions)
+        .where(
+          and(eq(sessions.userId, user.id), lt(sessions.expiresAt, new Date()))
+        );
+
       const token = generateSessionToken();
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      const expiresAt = new Date(Date.now() + SESSION_EXPIRY_MS);
 
       await db.insert(sessions).values({
         userId: user.id,
@@ -128,6 +207,10 @@ export const authRouter = router({
         expiresAt,
       });
 
+      // Set httpOnly cookie (primary auth method)
+      setSessionCookie(ctx.res, token, expiresAt);
+
+      // Also return token for clients that can't use cookies (e.g. mobile)
       return { token, user: { id: user.id, email: user.email, name: user.name } };
     }),
 
@@ -143,6 +226,14 @@ export const authRouter = router({
     if (token) {
       await db.delete(sessions).where(eq(sessions.token, token));
     }
+
+    // Clear the session cookie
+    ctx.res.clearCookie("session_token", {
+      httpOnly: true,
+      secure: env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+    });
 
     return { success: true };
   }),

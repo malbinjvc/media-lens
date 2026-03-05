@@ -9,14 +9,21 @@
 
   onMount(async () => {
     const code = $page.url.searchParams.get("code");
+    const urlState = $page.url.searchParams.get("state");
     const provider = sessionStorage.getItem("oauth_provider") as
       | "google"
       | "github"
       | null;
-    const codeVerifier = sessionStorage.getItem("oauth_code_verifier") || undefined;
+    const savedState = sessionStorage.getItem("oauth_state");
 
-    if (!code || !provider) {
+    if (!code || !provider || !urlState) {
       error = "Missing OAuth parameters";
+      return;
+    }
+
+    // Validate state matches (CSRF protection)
+    if (!savedState || urlState !== savedState) {
+      error = "Invalid OAuth state. Please try logging in again.";
       return;
     }
 
@@ -24,11 +31,11 @@
       const result = await trpc.auth.callback.mutate({
         provider,
         code,
-        codeVerifier,
+        state: urlState,
       });
-      auth.setUser(result.user, result.token);
+      auth.setUser(result.user);
       sessionStorage.removeItem("oauth_provider");
-      sessionStorage.removeItem("oauth_code_verifier");
+      sessionStorage.removeItem("oauth_state");
       goto("/");
     } catch (err) {
       error = err instanceof Error ? err.message : "Authentication failed";

@@ -54,6 +54,11 @@ export const aiRouter = router({
         await searchService.indexMedia(updated);
         return updated;
       } catch (error) {
+        console.error(
+          `[AI] Analysis failed for media ${item.id}:`,
+          error instanceof Error ? error.message : error
+        );
+
         await db
           .update(media)
           .set({ status: "failed", updatedAt: new Date() })

@@ -85,13 +85,33 @@ export const mediaRouter = router({
       z.object({
         filename: z.string().min(1).max(255),
         mimeType: z.string().min(1),
-        size: z.number().positive(),
+        size: z.number().positive().max(50 * 1024 * 1024),
         storageKey: z.string().min(1),
         title: z.string().min(1).max(255),
         projectId: z.string().uuid().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // SECURITY: Validate storageKey belongs to this user (prevent IDOR)
+      if (!input.storageKey.startsWith(`${ctx.user.id}/`)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Invalid storage key",
+        });
+      }
+
+      // Validate file type against allowed list
+      storageService.validateFile(input.mimeType, input.size);
+
+      // Verify file actually exists in storage
+      const exists = await storageService.objectExists(input.storageKey);
+      if (!exists) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "File not found in storage. Upload the file first.",
+        });
+      }
+
       const [item] = await db
         .insert(media)
         .values({
@@ -113,7 +133,7 @@ export const mediaRouter = router({
       z.object({
         id: z.string().uuid(),
         title: z.string().min(1).max(255).optional(),
-        description: z.string().optional(),
+        description: z.string().max(5000).optional(),
         projectId: z.string().uuid().nullable().optional(),
       })
     )

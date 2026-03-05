@@ -8,9 +8,7 @@
     loading = true;
     try {
       const result = await trpc.auth.getLoginUrl.mutate({ provider });
-      if (result.codeVerifier) {
-        sessionStorage.setItem("oauth_code_verifier", result.codeVerifier);
-      }
+      sessionStorage.setItem("oauth_state", result.state);
       sessionStorage.setItem("oauth_provider", provider);
       window.location.href = result.url;
     } catch (err) {
