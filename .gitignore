@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+.svelte-kit/
+.env
+*.log
+.DS_Store
+coverage/
+test-results/
+playwright-report/
+drizzle/meta/
+*.tsbuildinfo
